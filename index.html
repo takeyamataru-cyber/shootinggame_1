@@ -1,0 +1,1234 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+	<meta charset="UTF-8">
+	<title>シューティングゲーム</title>
+	<style>
+		canvas {
+			background-color: #000038;
+			display: block;
+			margin: 10px auto;
+		}
+	</style>
+</head>
+<body>
+
+	<canvas id="gameCanvas" width="550" height="700"></canvas>
+	
+	<script>
+		const canvas = document.getElementById("gameCanvas");
+		const ctx = canvas.getContext("2d");
+		
+		//自機
+		let playerWidth = 4;
+		let playerHeight = 4;
+		
+		let playerX = (canvas.width / 2) - (playerWidth / 2);
+		let playerY = canvas.height - playerHeight - 20;
+		
+		let playerSpeed = 5;
+		
+		let rightPressed = false;
+		let leftPressed = false;
+		let upPressed = false;
+		let downPressed = false;
+		let cPressed = false;
+		let xPressed = false;
+		let zPressed = false;
+		
+		let drawWidth = 35;
+		let drawHeight = 45;
+		let drawX = playerX + (playerWidth / 2) - (drawWidth / 2);
+		let drawY = playerY + (playerHeight / 2) - (drawHeight / 2);
+		
+		//弾
+		let bullets = [];
+		let bulletsCooldown = 0;
+		let playerBombs = 3;
+		
+		//敵
+		let enemies = [];
+		let enemySpawnTimer = 0;
+		
+		//アイテム
+		let items = [];
+		let playerPower = 0;
+		
+		//HP
+		let playerHP = 3;
+		let pichuunParticles = [];
+		let respawnTimer = 0;
+		
+		//タイマー
+		let timer = 0;
+		
+		//場面
+		let gameScene = 0;
+		
+		//ルーミア
+		let bossActive = false;
+		let bossX = 0;
+		let bossY = 0;
+		let bossWidth = 40;
+		let bossHeight = 50;
+		let bossSpeed = 2;
+		let bossVx = 2;
+		let bossHP = 4000;
+		let bossMaxHP = 4000;
+		let bossTimer = 0;
+		let bossState = 0;
+		let patternOrder = [0,1,2,3];
+		let spellCleared = false;
+		
+		const stage1Spawns = [
+			// 1秒目：画面左（X:100）から 0.4秒おきに 5体流れる
+			{ sec: 2, count: 5, intervalSec: 0.8, x: 150, moveType: "stop", hp: 7, speed: 1, sc: 25 },
+			
+			// 4秒目：画面右（X:450）から 0.4秒おきに 5体流れる
+			{ sec: 8, count: 5, intervalSec: 0.8, x: 400, moveType: "stop", hp: 7, speed: 1, sc: 25 },
+			
+			// 8秒目：画面中央に硬い中型敵が1体だけ出現
+			{ sec: 15, count: 1, x: 280, moveType: "midboss", hp: 80, speed: 0.6, sc: 15, width: 50, height: 50 },
+			
+			// 12秒目：ランダムな位置に 0.5秒おきに 8体ばらまく
+			{ sec: 20, count: 8, intervalSec: 0.5, randomX: true, hp: 7, speed: 1.1, sc: 20 },
+			
+			// 18秒目：左から右へナナメにずらしながら 6体出現（stepXで少しずつ右へ）
+			{ sec: 25, count: 6, intervalSec: 0.3, x: 80, stepX: 70, hp: 14, speed: 1.25, sc: 20 },
+			
+			// 25秒目：左右から同時に挟み撃ち
+			{ sec: 30, count: 4, intervalSec: 0.4, x: 100, hp: 20, speed: 1, sc: 20 },
+			{ sec: 30, count: 4, intervalSec: 0.4, x: 450, hp: 20, speed: 1, sc: 20 },
+			
+			{ sec: 40, count: 10, intervalSec: 0.8, x: 300, moveType: "slashLeft", hp: 20, speed: 1.5, sc: 20, width: 30, height: 30 },
+			{ sec: 40, count: 10, intervalSec: 0.8, x: 250, moveType: "slashRight", hp: 20, speed: 1.5, sc: 20, width: 30, height: 30 },
+			
+			{ sec: 40, count: 1, x: 200, shotType: "3way", hp: 40, speed: 3, sc: 20 },
+			{ sec: 40, count: 1, x: 350, shotType: "3way", hp: 40, speed: 3, sc: 20 },
+			
+			{ sec: 55, count: 1, x: 245, moveType: "midboss", shotType: "midboss", isMidBoss: true, hp: 1500, speed: 0.5, sc: 1, bulletSpeed: 2.2, width: 50, height: 50 },
+			
+			{ sec: 65, count: 10, intervalSec: 0.8, x: 200, moveType: "wave", shotType: "circle", hp: 40, speed: 0.5, sc: 15, bulletSpeed: 3 },
+			{ sec: 65, count: 10, intervalSec: 0.8, x: 350, moveType: "wave", shotType: "5way", hp: 40, speed: 0.5, sc: 15, bulletSpeed: 3 },
+			
+			{ sec: 75, count: 1, x: 245, moveType: "wave", shotType: "3way", hp: 300, speed: 1, sc: 10, bulletSpeed: 2 },
+			{ sec: 76, count: 1, x: 245, moveType: "midboss", shotType: "3way", hp: 300, speed: 1, sc: 10, bulletSpeed: 2 },
+		];
+		
+		let spawnQueue = [];
+		
+		// スケジュールを読み込んでフレーム単位のキューを作る関数
+		function buildSpawnQueue(eventList) {
+			spawnQueue = [];
+			eventList.forEach(event => {
+				let count = event.count || 1;
+				let intervalFrames = Math.round((event.intervalSec || 0.3) * 60);
+				let startFrame = Math.round(event.sec * 60);
+				
+				for (let i = 0; i < count; i++) {
+					spawnQueue.push({
+						frame: startFrame + i * intervalFrames,
+						x: event.randomX ? null : (event.x + (event.stepX || 0) * i),
+						hp: event.hp || 7,
+						speed: event.speed || 2,
+						sc: event.sc || 25,
+						bulletSpeed: event.bulletSpeed || 2.5,
+						width: event.width || 40,
+						height: event.height || 40,
+						// ★ 追加：動きと弾のバリエーション
+						moveType: event.moveType || "straight", // "straight", "stop", "wave", "slashLeft", "slashRight"
+						shotType: event.shotType || "aim",      // "aim", "3way", "5way", "circle"
+						bulletColor: event.bulletColor || null,  // ボスと同じ色指定（省略時は紫）
+						isMidBoss: event.isMidBoss || false
+					});
+				}
+			});
+			spawnQueue.sort((a, b) => a.frame - b.frame);
+		}
+		
+		document.addEventListener("keydown", (e) => {
+			if (e.key === "ArrowRight") rightPressed = true;
+			if (e.key === "ArrowLeft") leftPressed = true;
+			if (e.key === "ArrowUp") upPressed = true;
+			if (e.key === "ArrowDown") downPressed = true;
+			if (e.key === "c" || e.key === "C") cPressed = true;
+			if (e.key === "x") xPressed = true;
+			if (e.key === "z") zPressed = true;
+			if (e.key === "d") playerPower = 100;
+			if ((gameScene === 0 ||gameScene === 2 || gameScene === 3) && (e.key === "Enter" || e.key === "x")) {
+				resetGame();
+				gameScene = 1;
+			}
+		});
+		
+		document.addEventListener("keyup", (e) => {
+			if (e.key === "ArrowRight") rightPressed = false;
+			if (e.key === "ArrowLeft") leftPressed = false;
+			if (e.key === "ArrowUp") upPressed = false;
+			if (e.key === "ArrowDown") downPressed = false;
+			if (e.key === "c" || e.key === "C") cPressed = false;
+			if (e.key === "x") xPressed = false;
+			if (e.key === "z") zPressed = false;
+		});
+		
+		function triggerPichuunEffect() {
+			playerHP -= 1;
+			respawnTimer = 60;
+			console.log("被弾！残りHP:", playerHP);
+			let centerX = playerX + playerWidth / 2;
+			let centerY = playerY + playerHeight / 2;
+			for (let i = 0; i < 30; i++) {
+				let angle = (Math.PI * 2 / 30) * i;
+				let speed = Math.random() * 4 + 2;
+				pichuunParticles.push({
+					x: centerX,
+					y: centerY,
+					vx: Math.cos(angle) * speed,
+					vy: Math.sin(angle) * speed,
+					life: 30,
+					radius: Math.random() * 4 + 2
+				});
+			}
+		}
+		
+		function gameLoop() {
+			ctx.clearRect(0, 0, canvas.width, canvas.height);
+			
+			if(gameScene === 0) {
+				ctx.fillStyle = "white";
+				ctx.font = "40px Arial";
+				ctx.textAlign = "center";
+				ctx.fillText("SHOOTING GAME", canvas.width / 2, canvas.height / 2 - 50);
+				
+				ctx.font = "20px Arial";
+				ctx.fillText("Press ENTER or X to START", canvas.width / 2, canvas.height / 2 + 30);
+				
+				ctx.font = "20px Arial";
+				ctx.fillText("MOVE: Arrow Keys / Shot: X / Focus: Z / Bomd: C", canvas.width / 2, canvas.height / 2 + 100);
+				ctx.textAlign = "left";
+			}
+			else if (gameScene === 1) {
+				let displaySeconds = Math.floor(timer / 60);
+
+				if (respawnTimer > 0) {
+					respawnTimer--;
+					window.enemyBullets = [];
+					if (respawnTimer === 0 && playerHP > 0) {
+						playerX = (canvas.width / 2) - (playerWidth / 2);
+						playerY = canvas.height - playerHeight - 20;
+					}
+				}
+				
+				// ボスが非アクティブの時だけ雑魚を出す
+				if (!bossActive) {
+					while (spawnQueue.length > 0 && spawnQueue[0].frame <= timer) {
+						let e = spawnQueue.shift();
+						let spawnX = (e.x !== null) ? e.x : Math.random() * (canvas.width - e.width);
+						enemies.push({
+							x: spawnX,
+							y: -e.height,
+							width: e.width,
+							height: e.height,
+							speed: e.speed,
+							sc: e.sc,
+							hp: e.hp,
+							bulletSpeed: e.bulletSpeed,
+							isMidBoss: e.isMidBoss,
+							moveType: e.moveType,
+							shotType: e.shotType,         // ★ 追加
+							bulletColor: e.bulletColor   // ★ 追加
+						});
+					}
+				}
+				
+				enemies.forEach((enemy, index) => {
+					if (!enemy.timer) enemy.timer = 0;
+					enemy.timer++;
+					
+					// ─── ① 移動パターンの分岐 ───
+					if (enemy.moveType === "midboss") {
+						// ★ 中ボス：中央上部に降りてきて左右にゆらゆら動く
+						if (enemy.y < 120) {
+							enemy.y += 1.5;
+						} else if (enemy.timer < 1200) {
+							enemy.x = (canvas.width / 2 - enemy.width / 2) + Math.sin(enemy.timer * 0.03) * 100;
+						} else {
+							enemy.y -= 2; // 時間切れで上へ退却
+						}
+					} else if (enemy.moveType === "stop") {
+						// ★ stopタイプ：降りて停止後、外側（斜め上）へ逸れて帰る
+						if (enemy.y < 200 && enemy.timer < 120) {
+							// ① 降下（Y:200まで）
+							enemy.y += enemy.speed;
+						} else if (enemy.timer >= 120 && enemy.timer < 160) {
+							let escapeDir = (enemy.x < canvas.width / 2) ? -1 : 1;
+							if (!enemy.movedX) enemy.movedX = 0;
+							if (enemy.movedX < 50) {
+							let moveAmount = enemy.speed * 1.5; // 1フレームの移動量
+							enemy.x += escapeDir * moveAmount;
+							enemy.movedX += moveAmount;         // 動いた分をカウント
+						}
+						
+						} else {
+							// ③ 退却：上に戻りつつ、外側（左右）へ逸れて後続とすれ違う！
+							 // 画面左なら左へ、右なら右へ
+							enemy.y -= enemy.speed * 1.0; // 上へ
+						}
+					} else if (enemy.moveType === "wave") {
+						// 左右にゆらゆら揺れながら降りる
+						enemy.y += enemy.speed;
+						enemy.x += Math.sin(enemy.timer * 0.06) * 3;
+					} else if (enemy.moveType === "slashLeft") {
+						// 右上から左下へ高速で斜めに突っ切る
+						enemy.y += enemy.speed;
+						enemy.x -= enemy.speed * 1.5;
+					} else if (enemy.moveType === "slashRight") {
+						// 左上から右下へ高速で斜めに突っ切る
+						enemy.y += enemy.speed;
+						enemy.x += enemy.speed * 1.5;
+					} else {
+						// デフォルト：まっすぐ落下
+						if (enemy.y < 140) {
+							enemy.y += enemy.speed; // Y:140 まで降下
+						} else if (!enemy.stopTimer || enemy.stopTimer < 60) {
+							enemy.stopTimer = (enemy.stopTimer || 0) + 1; // 約1秒停止して撃つ
+						} else {
+							// 左側にいる敵は左へ、右側にいる敵は右へ抜ける
+							enemy.x += (enemy.x < canvas.width / 2 ? -1 : 1) * enemy.speed * 1.5;
+						}
+					}
+					
+					// ─── ② 弾発射パターンの分岐 ───
+					if (!enemy.shootCooldown) enemy.shootCooldown = 0;
+					enemy.shootCooldown++;
+					
+					if (enemy.shootCooldown >= enemy.sc && enemy.y < 350 && respawnTimer === 0) {
+						let eCenterX = enemy.x + enemy.width / 2;
+						let eCenterY = enemy.y + enemy.height / 2;
+						let dx = (playerX + playerWidth / 2) - eCenterX;
+						let dy = (playerY + playerHeight / 2) - eCenterY;
+						let angle = Math.atan2(dy, dx);
+						let bSpeed = enemy.bulletSpeed || 2.5;
+						
+						if (!window.enemyBullets) window.enemyBullets = [];
+						
+						// 弾を生成する共通ヘルパー
+						let fireBullet = (ang, spd) => {
+							window.enemyBullets.push({
+								x: eCenterX - 5,
+								y: enemy.y + enemy.height,
+								width: 10,
+								height: 10,
+								vx: Math.cos(ang) * spd,
+								vy: Math.sin(ang) * spd,
+								color: enemy.bulletColor,
+								isBossBullet: enemy.bulletColor ? true : false
+							});
+						};
+						
+						if (enemy.shotType === "midboss") {
+							// ★ 中ボス専用弾幕：3WAY青弾 ＋ 全方位12WAY緑弾
+							if (enemy.timer % 35 === 0) {
+								fireBullet(angle - 0.28, bSpeed);
+								fireBullet(angle, bSpeed);
+								fireBullet(angle + 0.28, bSpeed);
+							}
+							if (enemy.timer % 80 === 0) {
+								for (let i = 0; i < 12; i++) {
+									fireBullet((Math.PI * 2 / 12) * i, 1.8);
+								}
+							}
+						} else if (enemy.shotType === "3way") {
+							// 自機狙い 3WAY 扇弾
+							fireBullet(angle - 0.3, bSpeed);
+							fireBullet(angle, bSpeed);
+							fireBullet(angle + 0.3, bSpeed);
+						} else if (enemy.shotType === "5way") {
+							// 自機狙い 5WAY 扇弾
+							for (let i = -2; i <= 2; i++) {
+								fireBullet(angle + i * 0.25, bSpeed);
+							}
+						} else if (enemy.shotType === "circle") {
+							// 全方位 8WAY 弾（中型敵向け）
+							for (let i = 0; i < 10; i++) {
+								fireBullet((Math.PI * 2 / 10) * i, bSpeed * 0.8);
+							}
+						} else {
+							// デフォルト：自機狙い 1発
+							fireBullet(angle, bSpeed);
+						}
+						
+						enemy.shootCooldown = 0;
+					}
+					
+					// ─── ③ 画面外判定（四方に抜けた敵を削除） ───
+					if (
+						enemy.y > canvas.height + 50 ||
+						enemy.y < -60 ||
+						enemy.x < -60 ||
+						enemy.x > canvas.width + 60
+					) {
+						enemies.splice(index, 1);
+					}
+				});
+				
+				if (respawnTimer === 0) {
+					if (rightPressed) playerX += playerSpeed;
+					if (leftPressed) playerX -= playerSpeed;
+					if (upPressed) playerY -= playerSpeed;
+					if (downPressed) playerY += playerSpeed;
+				}
+				
+				let drawWidth = 35;
+				let drawHeight = 45;
+				let drawX = playerX + (playerWidth / 2) - (drawWidth / 2);
+				let drawY = playerY + (playerHeight / 2) - (drawHeight / 2);
+				
+				if (bulletsCooldown > 0) {
+					bulletsCooldown--;
+					if (bulletsCooldown < 0) bulletsCooldown = 0;
+				}
+				
+				let isMusouActive = bullets.some(b => b.isMusou);
+				if (xPressed && bulletsCooldown <= 0 && !isMusouActive) {
+					if (respawnTimer === 0){
+						// ★ フリーズ対策：どのパワーでも使えるように外側で初期化
+						let initialTarget = null;
+						if (bossActive && bossY > 0) {
+							// ボスがいるときはボスをターゲットにダミーオブジェクトを作る
+							initialTarget = { x: bossX, y: bossY, width: bossWidth, height: bossHeight, isBoss: true };
+						} else if (enemies.length > 0) {
+							initialTarget = enemies[0];
+							let minDst = Math.hypot(initialTarget.x - playerX, initialTarget.y - playerY);
+							for (let e = 1; e < enemies.length; e++) {
+								let dst = Math.hypot(enemies[e].x - playerX, enemies[e].y - playerY);
+								if (dst < minDst) {
+									minDst = dst;
+									initialTarget = enemies[e];
+								}
+							}
+						}
+
+						if (playerPower >= 100) {
+							bullets.push({ x: playerX - 12, y: playerY + (playerHeight / 2), width: 25, height: 25, vx: -2, speed: 20 });
+							bullets.push({ x: playerX - 12, y: playerY + (playerHeight / 2), width: 25, height: 25, vx: 0.7, speed: 20 });
+							bullets.push({ x: playerX - 12, y: playerY + (playerHeight / 2), width: 25, height: 25, vx: -0.7, speed: 20 });
+							bullets.push({ x: playerX - 12, y: playerY + (playerHeight / 2), width: 25, height: 25, vx: 2, speed: 20 });
+						}
+						else if(playerPower >= 40) {
+							bullets.push({ x: playerX - 10, y: playerY, width: 25, height: 25, vx: -2, speed: 16 });
+							bullets.push({ x: playerX + (playerWidth / 2) - 12.5, y: playerY, width: 25, height: 25, speed: 16 });
+							bullets.push({ x: playerX + playerWidth - 15, y: playerY, width: 25, height: 25, vx: 2, speed: 16 });
+						}
+						else if(playerPower >= 10) {
+							bullets.push({ x: playerX - 5, y: playerY, width: 25, height: 25, vx: 0.3, speed: 13 });
+							bullets.push({ x: playerX + playerWidth - 20, y: playerY, width: 25, height: 25, vx:-0.3, speed: 13 });
+						} else {
+							bullets.push({ x: playerX + (playerWidth / 2) - 12.5, y: playerY, width: 25, height: 25, vx: 0, speed: 13 });
+						}
+						
+						// パワー10以上の時のホーミング弾生成
+						if (playerPower >= 10) {
+							bullets.push( {
+								x: playerX - 10,
+								y: playerY + 10,
+								width: 18,
+								height: 18,
+								vx: -1,
+								speed: 14,
+								homing: true,
+								color: "blue",
+								targetEnemy: initialTarget
+							});
+							bullets.push( {
+								x: playerX + playerWidth + 2,
+								y: playerY + 10,
+								width: 18,
+								height: 18,
+								vx: 1,
+								speed: 14,
+								homing: true,
+								color: "blue",
+								targetEnemy: initialTarget
+							});
+						}
+						
+						if(playerPower >= 100) { bulletsCooldown = 1; } 
+						else if(playerPower >= 40){ bulletsCooldown = 2; } 
+						else if(playerPower >= 10){ bulletsCooldown = 4; } 
+						else { bulletsCooldown = 5; }
+					}
+				}
+				
+				if (zPressed) { playerSpeed = 2.5; } else { playerSpeed = 5; }
+				
+				if (cPressed && playerBombs > 0 && respawnTimer === 0 && !isMusouActive) {
+					playerBombs--;
+					cPressed = false;
+					window.enemyBullets = [];
+					
+					for(let i = 0; i < 7; i++){
+						let angle = (Math.PI * 2 / 7) * i;
+						bullets.push ({
+							x: playerX + 4,
+							y: playerY + 4,
+							width: 100,
+							height: 100,
+							isMusou: true,
+							color: "red",
+							musouTimer: 150,
+							damage: 8,
+							angle: angle,
+							radius: 100,
+							vx: 0,
+							speed: 0,
+							killP: 0,
+							dashTimer: 0,
+							hitBoss: false
+						});
+					}
+				}
+				
+				if(playerX < 0) playerX = 0;
+				if(playerX > canvas.width - playerWidth) playerX = canvas.width - playerWidth;
+				if(playerY > canvas.height - playerHeight) playerY = canvas.height - playerHeight;
+				if(playerY < 0) playerY = 0;
+				
+				for (let i = bullets.length - 1; i >= 0; i--) {
+					let bullet = bullets[i];
+					
+					if (bullet.homing && bullet.targetEnemy) {
+						// ボスか、またはまだ生存している雑魚敵かチェック
+						let targetExists = bullet.targetEnemy.isBoss ? bossActive : enemies.includes(bullet.targetEnemy);
+						
+						if (targetExists) {
+							// ターゲットの現在地を追跡（ボスの場合は刻々と変わるbossX, bossYを参照させる）
+							let tx = bullet.targetEnemy.isBoss ? bossX : bullet.targetEnemy.x;
+							let ty = bullet.targetEnemy.isBoss ? bossY : bullet.targetEnemy.y;
+							let tw = bullet.targetEnemy.width;
+							let th = bullet.targetEnemy.height;
+
+							let targetX = tx + tw / 2;
+							let targetY = ty + th / 2;
+							let angle = Math.atan2(targetY - (bullet.y + bullet.height / 2), targetX - (bullet.x + bullet.width / 2));
+							let totalSpeed = 8;
+							bullet.vx = Math.cos(angle) * totalSpeed;
+							bullet.speed = -Math.sin(angle) * totalSpeed;
+						} else {
+							if(!bullet.isMusou) {
+								bullet.homing = false;
+							} else {
+								if (enemies.length > 0) {
+									bullet.targetEnemy = enemies[0];
+								} else if (bossActive) {
+									bullet.targetEnemy = { x: bossX, y: bossY, width: bossWidth, height: bossHeight, isBoss: true };
+								} else {
+									bullet.angle += 0.08;
+									bullet.radius = 150;
+									let targetX = (playerX + playerWidth / 2) + Math.cos(bullet.angle) * bullet.radius - bullet.width / 2;
+									let targetY = (playerY + playerHeight / 2) - Math.sin(bullet.angle) * bullet.radius - bullet.height / 2;
+									let angleToTarget = Math.atan2(targetY - bullet.y, targetX - bullet.x);
+									let totalSpeed = 12;
+									bullet.vx = Math.cos(angleToTarget) * totalSpeed;
+									bullet.speed = -Math.sin(angleToTarget) * totalSpeed;
+								}
+							}
+						}
+					}
+					
+					if (bullet.isMusou) {
+						if (bullet.musouTimer > 0) {
+							bullet.musouTimer--;
+							bullet.angle += 0.08;
+							bullet.radius = 50 + (150 - bullet.musouTimer) * 0.67;
+							bullet.x = (playerX + playerWidth / 2) + Math.cos(bullet.angle) * bullet.radius - bullet.width / 2;
+							bullet.y = (playerY + playerHeight / 2) - Math.sin(bullet.angle) * bullet.radius - bullet.height / 2;
+							bullet.vx = 0;
+							bullet.speed = 0;
+							
+							if (bullet.musouTimer === 0) {
+								bullet.homingTimer = 300;
+							}
+						} 
+						else if (bullet.isExploding) {
+							bullet.explodeLeft--;
+							bullet.vx = 0;
+							bullet.speed = 0;
+							bullet.width += 6;
+							bullet.height += 6;
+							bullet.x -= 3;
+							bullet.y -= 3;
+							
+							if (window.enemyBullets) {
+								for (let bIndex = window.enemyBullets.length - 1; bIndex >= 0; bIndex--) {
+									let eb = window.enemyBullets[bIndex];
+									if (
+										bullet.x < eb.x + eb.width &&
+										bullet.x + bullet.width > eb.x &&
+										bullet.y < eb.y + eb.height &&
+										bullet.y + bullet.height > eb.y
+									) {
+										window.enemyBullets.splice(bIndex, 1);
+									}
+								}
+							}
+							
+							if (bullet.explodeLeft <= 0) {
+								bullets.splice(i, 1);
+								continue;
+							}
+						}
+						else {
+							if (bullet.homingTimer > 0) {
+								bullet.homingTimer--;
+								bullet.homing = true;
+								if (enemies.length > 0) {
+									bullet.targetEnemy = enemies[0];
+								} else if (bossActive) {
+									bullet.targetEnemy = { x: bossX, y: bossY, width: bossWidth, height: bossHeight, isBoss: true };
+								}
+								
+								if (bullet.homingTimer === 0) {
+									bullet.isExploding = true;
+									bullet.explodeLeft = 42;
+									bullet.homing = false;
+									bullet.damage = 15;
+								}
+							}
+						}
+					}
+					
+					bullet.y -= bullet.speed;
+					if(bullet.vx !== undefined) {
+						let currentVx = (zPressed && !bullet.homing) ? bullet.vx / 5 : bullet.vx;
+						bullet.x += currentVx;
+					}
+					if (
+							(bullet.y + bullet.height < 0 ||
+							bullet.y > canvas.height ||
+							bullet.x + bullet.width < 0 ||
+							bullet.x > canvas.width) &&
+							!(bullet.isMusou && (bullet.musouTimer > 0 || bullet.dashTimer > 0))
+					) {
+						bullets.splice(i, 1);
+					}
+				}
+				
+				// 当たり判定 (弾 vs 敵・ボス)
+				for (let bIndex = bullets.length - 1; bIndex >= 0; bIndex--) {
+					let bullet = bullets[bIndex];
+					let bulletRemoved = false;
+
+					// 雑魚との判定
+					for (let eIndex = enemies.length - 1; eIndex >= 0; eIndex--) {
+						let enemy = enemies[eIndex];
+						if (
+							bullet.x < enemy.x + enemy.width &&
+							bullet.x + bullet.width > enemy.x &&
+							bullet.y < enemy.y + enemy.height &&
+							bullet.y + bullet.height > enemy.y
+						) {
+							let dmg = bullet.damage || 2;
+							enemy.hp -= dmg;
+							if(!bullet.isMusou) {
+								bullets.splice(bIndex, 1);
+								bulletRemoved = true;
+							} else if (bullet.isMusou && !bullet.isExploding && bullet.musouTimer <= 0) {
+								bullet.isExploding = true;
+								bullet.explodeLeft = 42;
+								bullet.homing = false;
+								bullet.damage = 15;
+							}
+							
+							if(enemy.hp <= 0) {
+								// 中ボスなら20個、雑魚なら最大5個ドロップ
+								let dropCount = enemy.isMidBoss ? 20 : (Math.floor(Math.random() * 5) + 1);
+								for(let i = 0; i < dropCount; i++) {
+									items.push( {
+										x: enemy.x + (enemy.width / 2) - 5,
+										y: enemy.y + (enemy.height / 2) - 5,
+										width: 10,
+										height: 10,
+										vx: Math.random() * (enemy.isMidBoss ? 6 : 1) - (enemy.isMidBoss ? 3 : 0.5),
+										vy: -(Math.random() * 3 + 2)
+									});
+								}
+								enemies.splice(eIndex, 1);
+							}
+							break;
+						}
+					}
+
+					if (bulletRemoved) continue;
+
+					// ボスとの判定
+					if (bossActive && bossY > 0) {
+						// ★ボム回転中（musouTimer > 0）は、ボスにはダメージを与えずすり抜ける（雑魚にはこれまで通り当たります）
+						if (bullet.isMusou && bullet.musouTimer > 0) continue;
+
+						if (
+							bullet.x < bossX + bossWidth &&
+							bullet.x + bullet.width > bossX &&
+							bullet.y < bossY + bossHeight &&
+							bullet.y + bullet.height > bossY
+						) {
+							if (bullet.isMusou) {
+								// ★このボムがまだこの段階（直撃、または爆発）でダメージを与えていない場合のみ処理
+								if (!bullet.hitBoss) {
+									let dmg = bullet.damage || 1;
+									bossHP -= dmg;
+									bullet.hitBoss = true; // 同一形態での多段ヒットを防止
+								}
+								
+								// 飛んできたボムが当たったら、爆発状態に移行する
+								if (!bullet.isExploding && bullet.musouTimer <= 0) {
+									bullet.isExploding = true;
+									bullet.explodeLeft = 42;
+									bullet.homing = false;
+									bullet.damage = 60;
+									bullet.hitBoss = false; // ★爆発ダメージ判定のために、フラグを1度リセットする
+								}
+							} else {
+								// 通常弾の処理
+								let dmg = bullet.damage || 1;
+								bossHP -= dmg;
+								bullets.splice(bIndex, 1);
+							}
+							
+							if (bossHP <= 0) {
+								bossActive = false;
+								window.enemyBullets = []; // 敵の弾を全消去
+								enemies = [];             // 雑魚敵も消去
+								if (!window.clearTimer) window.clearTimer = 1; // クリア余韻タイマースタート
+							}
+						}
+					}
+				}
+				
+				items.forEach((item, index) => {
+					// ★ 重力と慣性で自然に落下
+					item.x += item.vx || 0;
+					item.y += item.vy || 2;
+					if (item.vy !== undefined && item.vy < 2.4) {
+						item.vy += 0.06; // 重力加速度
+					}
+					if (
+						drawX < item.x + item.width &&
+						drawX + drawWidth > item.x &&
+						drawY < item.y + item.height &&
+						drawY + drawHeight > item.y
+					) {
+						playerPower += 1;
+						items.splice(index, 1);
+						console.log("現在のパワー:",playerPower);
+					}
+				});
+				
+				if (respawnTimer === 0) {
+					enemies.forEach((enemy, index) => {
+						if (
+							playerX < enemy.x + enemy.width &&
+							playerX + playerWidth > enemy.x &&
+							playerY < enemy.y + enemy.height &&
+							playerY + playerHeight > enemy.y
+						) {
+							enemies.splice(index, 1);
+							triggerPichuunEffect();
+						}
+					});
+					
+					if (window.enemyBullets) {
+						for (let index = window.enemyBullets.length - 1; index >= 0; index--) {
+							let eb = window.enemyBullets[index];
+							
+							if (
+								playerX < eb.x + eb.width &&
+								playerX + playerWidth > eb.x &&
+								playerY < eb.y + eb.height &&
+								playerY + playerHeight > eb.y
+							) {
+								window.enemyBullets.splice(index, 1);
+								triggerPichuunEffect();
+								if(playerPower >= 10) playerPower -= 10;
+								continue;
+							}
+							
+							let isHitBomb = false;
+							for (let b = 0; b < bullets.length; b++) {
+								let bullet = bullets[b];
+								if (
+									bullet.isMusou &&
+									bullet.x < eb.x + eb.width &&
+									bullet.x + bullet.width > eb.x &&
+									bullet.y < eb.y + eb.height &&
+									bullet.y + bullet.height > eb.y
+								) {
+									isHitBomb = true;
+									break;
+								}
+							}
+							
+							if (isHitBomb) {
+								window.enemyBullets.splice(index, 1);
+								continue;
+							}
+						}
+					}
+				}
+				
+				if (window.enemyBullets) {
+					for (let i = window.enemyBullets.length - 1; i >= 0; i--) {
+						let eb = window.enemyBullets[i];
+						eb.x += eb.vx;
+						eb.y += eb.vy;
+						
+						ctx.beginPath();
+						let centerX = eb.x + eb.width / 2;
+						let centerY = eb.y + eb.height / 2;
+						let radius = eb.width / 2;
+						
+						// 常に弾を描画する（グラデーションの分岐処理）
+						let gradient = ctx.createRadialGradient(centerX, centerY, radius * 0.1, centerX, centerY, radius);
+						if (eb.isBossBullet) {
+							if (eb.color === "turquoise") {
+								// ★ ナイトバード用：東方風の青緑
+								gradient.addColorStop(0, "#e0fff8");
+								gradient.addColorStop(1, "#00ccb0");
+							} else if (eb.color === "white") {
+								// ★ 白弾
+								gradient.addColorStop(0, "#ffffff");
+								gradient.addColorStop(1, "#c0c0d0");
+							} else if (eb.color === "blue") {
+								gradient.addColorStop(0, "#c0e8ff");
+								gradient.addColorStop(1, "#0044ff");
+							} else if (eb.color === "purple") {
+								gradient.addColorStop(0, "#f0c0ff");
+								gradient.addColorStop(1, "#8800cc");
+							} else if (eb.color === "green") {
+								gradient.addColorStop(0, "#d0ffd0");
+								gradient.addColorStop(1, "#00aa22");
+							} else if (eb.color === "yellow") {
+								gradient.addColorStop(0, "#ffffcc");
+								gradient.addColorStop(1, "#ff9900");
+							} else { // デフォルト：red（赤×黄）
+								gradient.addColorStop(0, "yellow");
+								gradient.addColorStop(1, "red");
+							}
+						} else {
+							// 雑魚の弾（紫）
+							gradient.addColorStop(0, "white");
+							gradient.addColorStop(0.7, "#e0a0ff");
+							gradient.addColorStop(1, "#8800ff");
+						}
+						
+						ctx.fillStyle = gradient;
+						ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+						ctx.fill();
+					}
+				}
+				
+				// 10秒経ったらボスを出現させるフラグを立てる
+				if (displaySeconds >= 90 && !bossActive && bossHP > 0) {
+					window.enemyBullets = [];
+					
+					bossActive = true;
+					bossX = canvas.width / 2 - bossWidth / 2;
+					bossY = -50;
+					bossHP = bossMaxHP;
+				}
+
+				// ボス（ルーミア）の移動と描画
+				if (bossActive) {
+					if (bossY < 100) {
+						bossY += 1;
+					} 
+					bossTimer++;
+					if (respawnTimer === 0) {
+						// 1. 通常1_1（最初の155フレーム）の時だけ、ボスを左右に動かす
+						let currentFrame = bossTimer % 495; // ★ここを495に変更
+						if (currentFrame < 155) {           // ★ここも155に変更
+							bossX += bossVx;
+							if (bossX < 50 || bossX > canvas.width - bossWidth - 50) {
+								bossVx *= -1;
+							}
+						}
+						let centerX = bossX + bossWidth / 2;
+						let centerY = bossY + bossHeight / 2;
+						if (bossHP >= 1000){
+							rumiaNormal1(centerX, centerY, bossTimer, playerX, playerY);
+						} else {
+							if (!spellCleared){
+								window.enemyBullets = [];
+								spellCleared = true;
+							}
+							rumiaSpell1(centerX, centerY, bossTimer, playerX, playerY);
+						}
+					}
+					
+					ctx.fillStyle = "#4a0082";
+					ctx.fillRect(bossX, bossY, bossWidth, bossHeight);
+					
+					let hpBarWidth = canvas.width - 100;
+					let currentHpWidth = hpBarWidth * (bossHP / bossMaxHP);
+					
+					ctx.fillStyle = "rgba(255, 255, 255, 0.3)";
+					ctx.fillRect(50, 20, hpBarWidth, 10);
+					
+					ctx.fillStyle = "red";
+					ctx.fillRect(50, 20, currentHpWidth, 10);
+					
+				}
+				
+				bullets.forEach((bullet) => {
+					ctx.beginPath();
+					let centerX = bullet.x + bullet.width / 2;
+					let centerY = bullet.y + bullet.height / 2;
+					let radius = bullet.width / 2;
+					
+					let gradient = ctx.createRadialGradient(centerX, centerY, radius * 0.1, centerX, centerY, radius);
+					
+					if (bullet.color === "blue") {
+						gradient.addColorStop(0, "rgba(255, 255, 255, 0.9)");
+						gradient.addColorStop(0.6, "rgba(160, 192, 255, 0.7)");
+						gradient.addColorStop(1, "rgba(0, 68, 255, 0.25)");
+					} else if (bullet.color === "red"){
+						let hue = (timer * 5) % 360;
+						gradient.addColorStop(0, "rgba(255, 255, 255, 0.9)");
+						gradient.addColorStop(0.4, `hsla(${hue}, 100%, 75%, 0.8)`);
+						gradient.addColorStop(0.8, `hsla(${hue}, 100%, 50%, 0.6)`);
+						gradient.addColorStop(1, `hsla(${(hue + 60) % 360}, 100%, 0%, 0.1)`);
+					} else {
+						gradient.addColorStop(0, "rgba(255, 255, 255, 0.9)");
+						gradient.addColorStop(0.6, "rgba(255, 153, 153, 0.6)");
+						gradient.addColorStop(1, "rgba(255, 0, 0, 0.3)");
+					}
+					
+					ctx.fillStyle = gradient;
+					ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+					ctx.fill();
+				});
+				
+				ctx.fillStyle = "red";
+				enemies.forEach((enemy) => {
+					ctx.fillRect(enemy.x, enemy.y, enemy.width, enemy.height);
+				});
+				
+				ctx.fillStyle = "lime";
+				items.forEach((item) => {
+					ctx.fillRect(item.x, item.y, item.width, item.height);
+				});
+				if (respawnTimer === 0) {
+					ctx.fillStyle = "cyan";
+					ctx.fillRect(drawX, drawY, drawWidth, drawHeight);
+					if(zPressed){
+						ctx.fillStyle = "red";
+						ctx.fillRect(playerX, playerY, playerWidth, playerHeight);
+					}
+				}
+				if (window.enemyBullets) {
+					for (let i = window.enemyBullets.length - 1; i >= 0; i--) {
+						let eb = window.enemyBullets[i];
+						eb.x += eb.vx;
+						eb.y += eb.vy;
+						
+						ctx.beginPath();
+						let centerX = eb.x + eb.width / 2;
+						let centerY = eb.y + eb.height / 2;
+						let radius = eb.width / 2;
+						
+						// 常に弾を描画する（グラデーションの分岐処理）
+						let gradient = ctx.createRadialGradient(centerX, centerY, radius * 0.1, centerX, centerY, radius);
+						if (eb.isBossBullet) {
+							if (eb.color === "turquoise") {
+								// ★ ナイトバード用：東方風の青緑
+								gradient.addColorStop(0, "#e0fff8");
+								gradient.addColorStop(1, "#00ccb0");
+							} else if (eb.color === "white") {
+								// ★ 白弾
+								gradient.addColorStop(0, "#ffffff");
+								gradient.addColorStop(1, "#c0c0d0");
+							} else if (eb.color === "blue") {
+								gradient.addColorStop(0, "#c0e8ff");
+								gradient.addColorStop(1, "#0044ff");
+							} else if (eb.color === "purple") {
+								gradient.addColorStop(0, "#f0c0ff");
+								gradient.addColorStop(1, "#8800cc");
+							} else if (eb.color === "green") {
+								gradient.addColorStop(0, "#d0ffd0");
+								gradient.addColorStop(1, "#00aa22");
+							} else if (eb.color === "yellow") {
+								gradient.addColorStop(0, "#ffffcc");
+								gradient.addColorStop(1, "#ff9900");
+							} else { // デフォルト：red（赤×黄）
+								gradient.addColorStop(0, "yellow");
+								gradient.addColorStop(1, "red");
+							}
+						} else {
+							// 雑魚の弾（紫）
+							gradient.addColorStop(0, "white");
+							gradient.addColorStop(0.7, "#e0a0ff");
+							gradient.addColorStop(1, "#8800ff");
+						}
+						
+						ctx.fillStyle = gradient;
+						ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+						ctx.fill();
+					}
+				}
+				
+				ctx.fillStyle = "white";
+				ctx.font = "20px Arial";
+				ctx.fillText("POWER:" + playerPower, 20, 80);
+				ctx.fillStyle = "red";
+				ctx.fillText("LIFE: " + "★".repeat(Math.max(0,playerHP - 1)), 20, 140);
+				ctx.fillStyle = "green";
+				ctx.fillText("BOM: " + "★".repeat(playerBombs),17, 160);
+				
+				ctx.fillStyle = "white";
+				ctx.fillText("TIME:" + displaySeconds + "s", 20, 110);
+				
+				for (let i = pichuunParticles.length - 1; i >= 0; i--) {
+					let p = pichuunParticles[i];
+					p.x += p.vx;
+					p.y += p.vy;
+					p.life--;
+					
+					ctx.beginPath();
+					let grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.radius);
+					grad.addColorStop(0, "white");
+					grad.addColorStop(1, "rgba(255, 100, 150, 0.8)");
+					ctx.fillStyle = grad;
+					ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+					ctx.fill();
+					
+					if (p.life <= 0) {
+						pichuunParticles.splice(i, 1);
+					}
+					if (pichuunParticles.length === 0) {
+						playerBombs = 3;
+					}
+				}
+				
+				if(playerHP <= 0) {
+					if (pichuunParticles.length === 0) {
+						gameScene = 3;
+					}
+				}
+				if (window.clearTimer > 0) {
+					window.clearTimer++;
+					if (window.clearTimer >= 120) {
+						gameScene = 2;
+						window.clearTimer = 0;
+					}
+				}
+				timer++;
+			}
+			else if (gameScene === 2) {
+				ctx.fillStyle = "#ffffaa";
+				ctx.font = "40px Arial";
+				ctx.textAlign = "center";
+				ctx.fillText("STAGE CLEAR!", canvas.width / 2, canvas.height / 2 - 40);
+				
+				ctx.fillStyle = "white";
+				ctx.font = "20px Arial";
+				ctx.fillText("All Stage 1 Completed", canvas.width / 2, canvas.height / 2 + 10);
+				ctx.fillText("Press ENTER or X to REPLAY", canvas.width / 2, canvas.height / 2 + 60);
+				ctx.textAlign = "left";
+			}
+			else if (gameScene === 3) {
+				ctx.fillStyle = "red";
+				ctx.font = "40px Arial";
+				ctx.textAlign = "center";
+				ctx.fillText("GAME OVER", canvas.width / 2, canvas.height / 2 - 30);
+				
+				ctx.fillStyle = "white";
+				ctx.font = "20px Arial";
+				ctx.fillText("Press ENTER or X to RETRY", canvas.width / 2, canvas.height / 2 + 30)
+				ctx.textAlign = "left";
+			}
+			
+			requestAnimationFrame(gameLoop);
+		}
+		
+		function resetGame() {
+			playerHP = 3;
+			playerBombs = 3;
+			playerPower = 0;
+			timer = 0;
+			enemySpawnTimer = 0;
+			respawnTimer = 0;
+			window.clearTimer = 0;
+			
+			bullets = [];
+			enemies = [];
+			items = [];
+			pichuunParticles = [];
+			window.enemyBullets = [];
+			
+			bossActive = false;
+			bossHP = bossMaxHP;
+			spellCleared = false;
+			bossTimer = 0;
+			
+			playerX = (canvas.width / 2) - (playerWidth / 2);
+			playerY = canvas.height - playerHeight - 20;
+			
+			buildSpawnQueue(stage1Spawns);
+		}
+		
+		// ★ コードの最後（gameLoopの前）に追加
+		buildSpawnQueue(stage1Spawns);
+		
+		function spawnBossBullet(x, y, angle, speed, color = "red") {
+			if(!window.enemyBullets) window.enemyBullets = [];
+			window.enemyBullets.push({
+				x: x - 10,
+				y: y - 10,
+				width: 15,
+				height: 15,
+				vx: Math.cos(angle) * speed,
+				vy: Math.sin(angle) * speed,
+				isBossBullet: true,
+				color: color
+			});
+		}
+		
+		function rumiaNormal1_1(centerX, centerY, timer, pX, pY) {
+			let localTimer = timer % 300;
+			if (localTimer > 0 && localTimer <= 105 && localTimer % 15 === 0) {
+				let dx = (pX + 4) - centerX;
+				let dy = (pY + 4) - centerY;
+				let angle = Math.atan2(dy,dx);
+				for(let i = 0; i < 10; i++) {
+					let speed = 1.5 + (i * 0.14);
+					spawnBossBullet(centerX, centerY, angle, speed, "red");
+				}
+			}
+		}
+		
+		function rumiaNormal1_2(centerX, centerY, timer, pX, pY) {
+			let localTimer = timer % 120;
+			if (localTimer >= 30 && localTimer < 75 && localTimer % 3 === 0) {
+				let cycle = Math.floor(timer / 120);
+				let isLeft = cycle % 2 === 0;
+				let step = Math.floor((localTimer - 30) / 3);
+				
+				let startAngle = Math.PI / 3;
+				let angleSpread = step * 0.075; 
+				
+				let angle;
+				if (isLeft) {
+					angle = startAngle + angleSpread;
+				} else {
+					angle = startAngle * 2 - angleSpread;
+				}
+				
+				let baseSpeed = 1.8 + (step * 0.06);
+				spawnBossBullet(centerX, centerY, angle, baseSpeed, "green");
+			}
+		}
+		
+		function rumiaNormal1_3(centerX, centerY, timer, pX, pY) {
+			let localTimer = timer % 100;
+			
+			if (localTimer === 50) {
+				let dx = (pX + 4) - centerX;
+				let dy = (pY + 4) - centerY;
+				let angleToPlayer = Math.atan2(dy, dx);
+				
+				// 円形弾
+				let circleCount = 16;
+				for (let i = 0; i < circleCount; i++) {
+					let angle = (Math.PI * 2 / circleCount) * i;
+					spawnBossBullet(centerX, centerY, angle, 1.8, "red");
+				}
+				
+				// 3ウェイ直線弾
+				let wayAngles = [angleToPlayer - 0.2, angleToPlayer, angleToPlayer + 0.2];
+				wayAngles.forEach(angle => {
+					for (let i = 0; i < 15; i++) {
+						let speed = 1.6 + (i * 0.25);
+						spawnBossBullet(centerX, centerY, angle, speed, "blue");
+					}
+				});
+			}
+		}
+		function shuffleArray(array) {
+			for (let i = array.length - 1; i > 0; i--) {
+				let j = Math.floor(Math.random() * (i + 1));
+				[array[i], array[j]] = [array[j], array[i]];
+			}
+		}
+		function rumiaNormal1(centerX, centerY, timer, pX, pY) {
+			let totalPeriod = 495;
+			let currentFrame = timer % totalPeriod;
+			if (currentFrame === 0) {
+				shuffleArray(patternOrder);
+			}
+			let phase = 0;
+			let phaseTime = currentFrame;
+			if (currentFrame < 155) {
+				phase = 0;
+				phaseTime = currentFrame;
+			} else if (currentFrame < 275) {
+				phase = 1;
+				phaseTime = currentFrame - 155;
+			} else if (currentFrame < 375) {
+				phase = 2;
+				phaseTime = currentFrame - 275;
+			} else {
+				phase = 3;
+				phaseTime = currentFrame - 375;
+			}
+			let currentPattern = patternOrder[phase];
+			if (currentPattern === 0) {
+				rumiaNormal1_1(centerX, centerY, phaseTime, pX, pY);
+			} else if (currentPattern === 1) {
+				rumiaNormal1_2(centerX, centerY, phaseTime, pX, pY); // 左撃ち
+			} else if (currentPattern === 2) {
+				rumiaNormal1_3(centerX, centerY, phaseTime, pX, pY);
+			} else if (currentPattern === 3) {
+				rumiaNormal1_2(centerX, centerY, phaseTime + 120, pX, pY); // 右撃ち
+			}
+		}
+		function rumiaSpell1(centerX, centerY, timer, pX, pY) {
+			let cyclePeriod = 280; // 左右1往復の全体周期
+			let cycleTimer = timer % cyclePeriod;
+			
+			// 前半（0〜139）は左側、後半（140〜279）は右側
+			let isRightSide = cycleTimer >= 140;
+			let sideTimer = cycleTimer % 140;
+			
+			// 画面端近く（70px 〜 530px - bossWidth）まで大きく左右移動
+			let targetX = isRightSide ? (canvas.width - bossWidth - 70) : 70;
+			bossX += (targetX - bossX) * 0.08;
+			
+			// 各ポジションに到着後、4回発射（40, 60, 80, 100フレーム目）
+			if (sideTimer >= 40 && sideTimer <= 100 && (sideTimer - 40) % 20 === 0) {
+				let shotIndex = Math.floor((sideTimer - 40) / 20); // 0, 1, 2, 3 (計4発)
+				let isLeft = (shotIndex % 2 === 0); // 左 → 右 → 左 → 右 と交互に切り替え
+				
+				let bulletCount = 8;          // 1波あたりの弾数
+				let startAngle = Math.PI / 2; // 真下基準（90度）
+				let maxSpread = 0.85;         // 扇の広がり幅
+				
+				for (let i = 0; i < bulletCount; i++) {
+					let spread = (maxSpread / (bulletCount - 1)) * i;
+					// どこに位置していても左・右交互に展開
+					let angle = isLeft ? (startAngle + spread) : (startAngle - spread);
+					
+					// 2層の厚みを持たせて一括生成
+					let baseSpeed = 1.9;
+					for (let layer = 0; layer < 2; layer++) {
+						let speed = baseSpeed - (layer * 0.4);
+						let bulletColor = isLeft ? "blue" : "turquoise";
+						spawnBossBullet(centerX, centerY, angle, speed, bulletColor);
+					}
+				}
+			}
+		}
+		
+		gameLoop();
+	</script>
+</body>
+</html>
